@@ -5,17 +5,16 @@ import { Context } from '@type/request';
 
 import { balanceEvent, Kind, txErrorEvent, txOkEvent } from '@lib/events';
 import {
-  BalancesByAccount,
   ExtBalance,
-  snapshotCreate,
-  TransactionType,
   getTxHandler,
   ITransaction,
+  snapshotCreate,
+  TransactionType,
 } from '@lib/transactions';
 import { requiredEnvVar, logger, nowInSeconds } from '@lib/utils';
 import { Prisma, Token } from '@prisma/client';
 
-const log: Debugger = logger.extend('nostr:internalTransactionStart');
+const log: Debugger = logger.extend('nostr:inboundTransactionStart');
 const debug: Debugger = log.extend('debug');
 const warn: Debugger = log.extend('warn');
 const error: Debugger = log.extend('error');
@@ -24,12 +23,12 @@ const MAX_RETRIES = 10;
 const filter: NDKFilter = {
   kinds: [Kind.REGULAR.valueOf()],
   '#p': [requiredEnvVar('NOSTR_PUBLIC_KEY')],
-  '#t': [TransactionType.INTERNAL.start],
+  '#t': [TransactionType.INBOUND.start],
   since: nowInSeconds() - 86000,
 };
 
 /**
- * Return the internal-transaction handler
+ * Return the inbound-transaction handler
  *
  * Injects the context to the handler and also `ntry` based on which
  * the handler will decide if it must retry handling the event in case of
@@ -40,69 +39,41 @@ const getHandler = (
   ntry: number,
 ): ((nostrEvent: NostrEvent) => void) => {
   /**
-   * Handle an internal-transaction event
+   * Handle an inbound-transaction event
    *
    * If the sender has enough funds, move the funds
    * from the sender's balance to the receiver's and publish the result
    * in nostr
    *
    * Handles:
-   *  - 'internal-transaction-start'
+   *  - 'inbound-transaction-start'
    *
    * Publishes:
-   *  - 'internal-transaction-ok' if the funds were transferred
-   *  - 'internal-transaction-error' if the funds were not transferred
+   *  - 'inbound-transaction-ok' if the funds were transferred
+   *  - 'inbound-transaction-error' if the funds were not transferred
    */
   return getTxHandler(
     ctx,
     ntry,
-    TransactionType.INTERNAL,
+    TransactionType.INBOUND,
     async (
       nostrEvent: NostrEvent,
       event: Prisma.EventCreateInput,
       intTx: ITransaction,
       tokens: Token[],
     ) => {
+      // TODO: check if author can mint
+      if (event.author !== requiredEnvVar('MINTER_PUBLIC_KEY')) {
+        warn('Non-minter is trying to mint. %s', event.id);
+        await ctx.prisma.event.create({ data: event });
+        ctx.outbox.publish(
+          txErrorEvent('Author cannot mint this token', intTx),
+        );
+      }
+
       ctx.prisma
         .$transaction(async (tx) => {
           debug('Starting transaction for %s', event.id);
-          const balances = await tx.balance.findMany({
-            where: {
-              OR: [
-                {
-                  // sender's balances
-                  accountId: intTx.senderId,
-                  OR: tokens.map((t) => ({
-                    tokenId: t.id,
-                    snapshot: {
-                      amount: { gte: intTx.content.tokens[t.name] },
-                    },
-                  })),
-                },
-                {
-                  // receiver's balances
-                  accountId: intTx.receiverId,
-                  OR: tokens.map((t) => ({ tokenId: t.id })),
-                },
-              ],
-            },
-            include: { snapshot: true, token: true },
-          });
-          const balancesByAccount = balances.reduce(
-            (group: BalancesByAccount, balance) => {
-              if (intTx.senderId === balance.accountId) {
-                group.sender.push(balance);
-              } else {
-                group.receiver.push(balance);
-              }
-              return group;
-            },
-            { sender: [], receiver: [] },
-          );
-          // Does sender have the funds?
-          if (balancesByAccount.sender.length != tokens.length) {
-            throw new NotFoundError('', '');
-          }
 
           const transaction = await tx.transaction.create({
             data: {
@@ -112,35 +83,18 @@ const getHandler = (
             },
           });
 
-          const existingBalances = balancesByAccount.receiver.map(
-            (b) => b.tokenId,
+          const balances = await tx.balance.findMany({
+            where: {
+              accountId: intTx.receiverId,
+              OR: tokens.map((t) => ({ tokenId: t.id })),
+            },
+            include: { snapshot: true, token: true },
+          });
+          const newBalances = tokens.filter(
+            (tk) => balances.map((t) => t.tokenId).indexOf(tk.id) < 0,
           );
-          const newBalances = balancesByAccount.sender
-            .map((b) => b.token)
-            .filter((t) => existingBalances.indexOf(t.id) < 0);
-          for (const balance of balancesByAccount.sender) {
+          for (const balance of balances) {
             const txAmount: number = intTx.content.tokens[balance.token.name];
-            balance.eventId = event.id;
-            balance.snapshot = {
-              ...balance.snapshot,
-              amount: balance.snapshot.amount.sub(txAmount),
-              transactionId: transaction.id,
-            };
-            await tx.balance.update({
-              where: {
-                accountId_tokenId: {
-                  tokenId: balance.tokenId,
-                  accountId: balance.accountId,
-                },
-              },
-              data: {
-                event: { connect: { id: transaction.eventId } },
-                snapshot: { create: snapshotCreate(balance, -txAmount) },
-              },
-            });
-          }
-          for (const balance of balancesByAccount.receiver) {
-            const txAmount = intTx.content.tokens[balance.token.name];
             balance.eventId = event.id;
             balance.snapshot = {
               ...balance.snapshot,
@@ -162,7 +116,7 @@ const getHandler = (
           }
           for (const token of newBalances) {
             const txAmount = intTx.content.tokens[token.name];
-            balancesByAccount.receiver.push({
+            balances.push({
               token,
               snapshot: { amount: new Decimal(txAmount) },
               accountId: intTx.receiverId,
@@ -181,13 +135,13 @@ const getHandler = (
               ${event.id}, ${txAmount},  ${token.id}::uuid, ${intTx.receiverId}
             FROM   ins_balance;`;
           }
-          return balancesByAccount;
+          return balances;
         })
-        .then((balancesByAccount: BalancesByAccount) => {
+        .then((balances: ExtBalance[]) => {
           debug('Transaction completed ok: %s', event.id);
           ctx.outbox.publish(txOkEvent(intTx));
-          [...balancesByAccount.sender, ...balancesByAccount.receiver].forEach(
-            (b) => ctx.outbox.publish(balanceEvent(b, event.id)),
+          balances.forEach((b) =>
+            ctx.outbox.publish(balanceEvent(b, event.id)),
           );
           debug('Ok published');
           log('Finished handling event %s', event.id);
@@ -197,16 +151,16 @@ const getHandler = (
             log('Failing because not enough funds. %s', event.id);
             await ctx.prisma.event.create({ data: event });
             ctx.outbox.publish(txErrorEvent('Not enough funds', intTx));
-            return;
-          }
-          warn('Transaction failed, reason: %O', e);
-          if (ntry < MAX_RETRIES) {
-            log('Retrying event %s', event.id);
-            await getHandler(ctx, ++ntry)(nostrEvent);
           } else {
-            error('Too many retries for %s, failing transaction', event.id);
-            await ctx.prisma.event.create({ data: event });
-            ctx.outbox.publish(txErrorEvent('Network Error', intTx));
+            warn('Transaction failed, reason: %O', e);
+            if (ntry < MAX_RETRIES) {
+              log('Retrying event %s', event.id);
+              await getHandler(ctx, ++ntry)(nostrEvent);
+            } else {
+              error('Too many retries for %s, failing transaction', event.id);
+              await ctx.prisma.event.create({ data: event });
+              ctx.outbox.publish(txErrorEvent('Network Error', intTx));
+            }
           }
         });
     },

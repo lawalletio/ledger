@@ -1,7 +1,8 @@
+import { Debugger } from 'debug';
 import { NostrEvent } from '@nostr-dev-kit/ndk';
 
-import { ExtBalance, InternalTransaction } from '@lib/transactions';
-import { nowInSeconds, requiredEnvVar, requiredProp } from '@lib/utils';
+import { ExtBalance, ITransaction } from '@lib/transactions';
+import { logger, nowInSeconds, requiredEnvVar, requiredProp } from '@lib/utils';
 
 export enum Kind {
   REGULAR = 1112,
@@ -9,13 +10,16 @@ export enum Kind {
   PARAMETRIZED_REPLACEABLE = 31111,
 }
 
+const log: Debugger = logger.extend('nostr:events');
+const warn: Debugger = log.extend('warn');
+
 /**
  * Creates a response event for publishing on nostr after processing a
  * transaction.
  */
 function txResultEvent(
   content: string,
-  tx: InternalTransaction,
+  tx: ITransaction,
   success: boolean,
 ): NostrEvent {
   return {
@@ -27,7 +31,7 @@ function txResultEvent(
       ['p', tx.senderId],
       ['p', tx.receiverId],
       ['e', tx.eventId],
-      ['t', `internal-transaction-${success ? 'ok' : 'error'}`],
+      ['t', success ? tx.txType.ok : tx.txType.error],
     ],
   };
 }
@@ -37,13 +41,19 @@ function txResultEvent(
  * to the database.
  */
 export function nostrEventToDB(event: NostrEvent) {
+  let payload: any;
+  try {
+    payload = JSON.parse(event.content);
+  } catch {
+    warn('Error parsing content %O', event.content);
+  }
   return {
     id: requiredProp<string>(event, 'id'),
     signature: requiredProp<string>(event, 'sig'),
     author: event.pubkey,
     signer: event.pubkey,
     kind: requiredProp<number>(event, 'kind'),
-    payload: JSON.parse(event.content),
+    payload,
   };
 }
 
@@ -69,7 +79,7 @@ export function balanceEvent(balance: ExtBalance, eventId: string): NostrEvent {
  * Creates an event for publishing on nostr after correctly processing a
  * transaction.
  */
-export function txOkEvent(tx: InternalTransaction): NostrEvent {
+export function txOkEvent(tx: ITransaction): NostrEvent {
   return txResultEvent('{}', tx, true);
 }
 
@@ -77,9 +87,6 @@ export function txOkEvent(tx: InternalTransaction): NostrEvent {
  * Creates an event for publishing on nostr after encoutering an error
  * while processing a transaction.
  */
-export function txErrorEvent(
-  message: string,
-  tx: InternalTransaction,
-): NostrEvent {
+export function txErrorEvent(message: string, tx: ITransaction): NostrEvent {
   return txResultEvent(`{messages:["${message}"]}`, tx, false);
 }
