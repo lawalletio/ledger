@@ -1,9 +1,10 @@
 import { Debugger } from 'debug';
 import { NostrEvent } from '@nostr-dev-kit/ndk';
-import { Prisma, PrismaClient } from '@prisma/client';
+import { Prisma, PrismaClient, Token, Transaction } from '@prisma/client';
 import { Context } from '@type/request';
 import { logger } from '@lib/utils';
 import { nostrEventToDB, txErrorEvent } from './events';
+import { Decimal } from '@prisma/client/runtime/library';
 
 const log: Debugger = logger.extend('nostr:transactions');
 const debug: Debugger = log.extend('debug');
@@ -73,6 +74,9 @@ export function snapshotCreate(
   };
 }
 
+/**
+ * Return the database id of a transaction type
+ */
 export async function getTxTypeId(
   prisma: PrismaClient,
   typeName: string,
@@ -119,7 +123,7 @@ export function getTxHandler(
     const tx: ITransaction = {
       txTypeId: '',
       txType: txType,
-      senderId: nostrEvent.pubkey,
+      senderId: event.author,
       receiverId: nostrEvent.tags.filter((t) => t[0] == 'p')[1][1],
       eventId: event.id,
       content: event.payload,
@@ -155,4 +159,108 @@ export function getTxHandler(
     tx.txTypeId = txTypeId;
     await handler(nostrEvent, event, tx, tokens);
   };
+}
+
+/**
+ * Apply a transaction to an array of balances
+ *
+ * Applies a transaction to a balance, having into considation the
+ * direction of the funds flow.
+ */
+async function alterBalances(
+  balances: ExtBalance[],
+  event: Prisma.EventCreateInput,
+  tx: Prisma.TransactionClient,
+  transaction: Transaction,
+  intTx: ITransaction,
+  isInflow: boolean,
+): Promise<ExtBalance[]> {
+  for (const balance of balances) {
+    const txAmount = intTx.content.tokens[balance.token.name];
+    const balAmount = isInflow
+      ? balance.snapshot.amount.add(txAmount)
+      : balance.snapshot.amount.sub(txAmount);
+    balance.eventId = event.id;
+    balance.snapshot = {
+      ...balance.snapshot,
+      amount: balAmount,
+      transactionId: transaction.id,
+    };
+    await tx.balance.update({
+      where: {
+        accountId_tokenId: {
+          tokenId: balance.tokenId,
+          accountId: balance.accountId,
+        },
+      },
+      data: {
+        event: { connect: { id: transaction.eventId } },
+        snapshot: {
+          create: snapshotCreate(balance, isInflow ? txAmount : -txAmount),
+        },
+      },
+    });
+  }
+  return balances;
+}
+
+/**
+ * Add token amounts to existing balances
+ */
+export async function addToBalances(
+  balances: ExtBalance[],
+  event: Prisma.EventCreateInput,
+  tx: Prisma.TransactionClient,
+  transaction: Transaction,
+  intTx: ITransaction,
+): Promise<ExtBalance[]> {
+  return alterBalances(balances, event, tx, transaction, intTx, true);
+}
+
+/**
+ * Remove token amounts from existing balances
+ */
+export async function removeFromBalances(
+  balances: ExtBalance[],
+  event: Prisma.EventCreateInput,
+  tx: Prisma.TransactionClient,
+  transaction: Transaction,
+  intTx: ITransaction,
+): Promise<ExtBalance[]> {
+  return alterBalances(balances, event, tx, transaction, intTx, false);
+}
+
+/**
+ * Create new balances with the tokens and amounts defined
+ */
+export async function createBalances(
+  tokens: Token[],
+  event: Prisma.EventCreateInput,
+  tx: Prisma.TransactionClient,
+  transaction: Transaction,
+  intTx: ITransaction,
+): Promise<ExtBalance[]> {
+  const balances: ExtBalance[] = [];
+  for (const token of tokens) {
+    const txAmount = intTx.content.tokens[token.name];
+    balances.push({
+      token,
+      snapshot: { amount: new Decimal(txAmount) },
+      accountId: intTx.receiverId,
+    } as ExtBalance);
+    // Create two interconnected one-to-one records at the same time
+    await tx.$executeRaw`
+    WITH ins_balance AS (
+      INSERT INTO balances (account_id, token_id, snapshot_id, event_id)
+      VALUES (${intTx.receiverId}, ${token.id}::uuid,
+        pg_catalog.gen_random_uuid(), ${event.id})
+      RETURNING *
+    )
+    INSERT INTO balance_snapshots
+      (id, amount, transaction_id, event_id, delta, token_id, account_id)
+    SELECT snapshot_id, ${txAmount}, ${transaction.id}::uuid,
+      ${event.id}, ${txAmount},  ${token.id}::uuid, ${intTx.receiverId}
+    FROM   ins_balance;`;
+  }
+  return balances;
 }

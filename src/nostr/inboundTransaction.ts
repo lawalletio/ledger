@@ -1,6 +1,6 @@
 import { Debugger } from 'debug';
 import type { NDKFilter, NostrEvent } from '@nostr-dev-kit/ndk';
-import { Decimal, NotFoundError } from '@prisma/client/runtime/library';
+import { NotFoundError } from '@prisma/client/runtime/library';
 import { Context } from '@type/request';
 
 import { balanceEvent, Kind, txErrorEvent, txOkEvent } from '@lib/events';
@@ -8,13 +8,13 @@ import {
   ExtBalance,
   getTxHandler,
   ITransaction,
-  snapshotCreate,
   TransactionType,
+  addToBalances,
 } from '@lib/transactions';
 import { requiredEnvVar, logger, nowInSeconds } from '@lib/utils';
 import { Prisma, Token } from '@prisma/client';
 
-const log: Debugger = logger.extend('nostr:inboundTransactionStart');
+const log: Debugger = logger.extend('nostr:inboundTransaction');
 const debug: Debugger = log.extend('debug');
 const warn: Debugger = log.extend('warn');
 const error: Debugger = log.extend('error');
@@ -41,16 +41,15 @@ const getHandler = (
   /**
    * Handle an inbound-transaction event
    *
-   * If the sender has enough funds, move the funds
-   * from the sender's balance to the receiver's and publish the result
-   * in nostr
+   * If the author is a minter, create the funds in the receiver's
+   * account and publish the result in nostr.
    *
    * Handles:
    *  - 'inbound-transaction-start'
    *
    * Publishes:
-   *  - 'inbound-transaction-ok' if the funds were transferred
-   *  - 'inbound-transaction-error' if the funds were not transferred
+   *  - 'inbound-transaction-ok' if the funds were minted
+   *  - 'inbound-transaction-error' if the funds were not minted
    */
   return getTxHandler(
     ctx,
@@ -62,7 +61,6 @@ const getHandler = (
       intTx: ITransaction,
       tokens: Token[],
     ) => {
-      // TODO: check if author can mint
       if (event.author !== requiredEnvVar('MINTER_PUBLIC_KEY')) {
         warn('Non-minter is trying to mint. %s', event.id);
         await ctx.prisma.event.create({ data: event });
@@ -83,7 +81,7 @@ const getHandler = (
             },
           });
 
-          const balances = await tx.balance.findMany({
+          let balances = await tx.balance.findMany({
             where: {
               accountId: intTx.receiverId,
               OR: tokens.map((t) => ({ tokenId: t.id })),
@@ -93,48 +91,16 @@ const getHandler = (
           const newBalances = tokens.filter(
             (tk) => balances.map((t) => t.tokenId).indexOf(tk.id) < 0,
           );
-          for (const balance of balances) {
-            const txAmount: number = intTx.content.tokens[balance.token.name];
-            balance.eventId = event.id;
-            balance.snapshot = {
-              ...balance.snapshot,
-              amount: balance.snapshot.amount.add(txAmount),
-              transactionId: transaction.id,
-            };
-            await tx.balance.update({
-              where: {
-                accountId_tokenId: {
-                  tokenId: balance.tokenId,
-                  accountId: balance.accountId,
-                },
-              },
-              data: {
-                event: { connect: { id: transaction.eventId } },
-                snapshot: { create: snapshotCreate(balance, txAmount) },
-              },
-            });
-          }
-          for (const token of newBalances) {
-            const txAmount = intTx.content.tokens[token.name];
-            balances.push({
-              token,
-              snapshot: { amount: new Decimal(txAmount) },
-              accountId: intTx.receiverId,
-            } as ExtBalance);
-            // Create two interconnected one-to-one records at the same time
-            await tx.$executeRaw`
-            WITH ins_balance AS (
-              INSERT INTO balances (account_id, token_id, snapshot_id, event_id)
-              VALUES (${intTx.receiverId}, ${token.id}::uuid,
-                pg_catalog.gen_random_uuid(), ${event.id})
-              RETURNING *
-            )
-            INSERT INTO balance_snapshots
-              (id, amount, transaction_id, event_id, delta, token_id, account_id)
-            SELECT snapshot_id, ${txAmount}, ${transaction.id}::uuid,
-              ${event.id}, ${txAmount},  ${token.id}::uuid, ${intTx.receiverId}
-            FROM   ins_balance;`;
-          }
+          balances = await addToBalances(
+            balances,
+            event,
+            tx,
+            transaction,
+            intTx,
+          );
+          balances.concat(
+            createBalances(newBalances, event, tx, transaction, intTx),
+          );
           return balances;
         })
         .then((balances: ExtBalance[]) => {

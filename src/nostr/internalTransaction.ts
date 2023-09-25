@@ -1,21 +1,22 @@
 import { Debugger } from 'debug';
 import type { NDKFilter, NostrEvent } from '@nostr-dev-kit/ndk';
-import { Decimal, NotFoundError } from '@prisma/client/runtime/library';
+import { NotFoundError } from '@prisma/client/runtime/library';
 import { Context } from '@type/request';
 
 import { balanceEvent, Kind, txErrorEvent, txOkEvent } from '@lib/events';
 import {
   BalancesByAccount,
-  ExtBalance,
-  snapshotCreate,
   TransactionType,
   getTxHandler,
   ITransaction,
+  addToBalances,
+  createBalances,
+  removeFromBalances,
 } from '@lib/transactions';
 import { requiredEnvVar, logger, nowInSeconds } from '@lib/utils';
 import { Prisma, Token } from '@prisma/client';
 
-const log: Debugger = logger.extend('nostr:internalTransactionStart');
+const log: Debugger = logger.extend('nostr:internalTransaction');
 const debug: Debugger = log.extend('debug');
 const warn: Debugger = log.extend('warn');
 const error: Debugger = log.extend('error');
@@ -118,69 +119,23 @@ const getHandler = (
           const newBalances = balancesByAccount.sender
             .map((b) => b.token)
             .filter((t) => existingBalances.indexOf(t.id) < 0);
-          for (const balance of balancesByAccount.sender) {
-            const txAmount: number = intTx.content.tokens[balance.token.name];
-            balance.eventId = event.id;
-            balance.snapshot = {
-              ...balance.snapshot,
-              amount: balance.snapshot.amount.sub(txAmount),
-              transactionId: transaction.id,
-            };
-            await tx.balance.update({
-              where: {
-                accountId_tokenId: {
-                  tokenId: balance.tokenId,
-                  accountId: balance.accountId,
-                },
-              },
-              data: {
-                event: { connect: { id: transaction.eventId } },
-                snapshot: { create: snapshotCreate(balance, -txAmount) },
-              },
-            });
-          }
-          for (const balance of balancesByAccount.receiver) {
-            const txAmount = intTx.content.tokens[balance.token.name];
-            balance.eventId = event.id;
-            balance.snapshot = {
-              ...balance.snapshot,
-              amount: balance.snapshot.amount.add(txAmount),
-              transactionId: transaction.id,
-            };
-            await tx.balance.update({
-              where: {
-                accountId_tokenId: {
-                  tokenId: balance.tokenId,
-                  accountId: balance.accountId,
-                },
-              },
-              data: {
-                event: { connect: { id: transaction.eventId } },
-                snapshot: { create: snapshotCreate(balance, txAmount) },
-              },
-            });
-          }
-          for (const token of newBalances) {
-            const txAmount = intTx.content.tokens[token.name];
-            balancesByAccount.receiver.push({
-              token,
-              snapshot: { amount: new Decimal(txAmount) },
-              accountId: intTx.receiverId,
-            } as ExtBalance);
-            // Create two interconnected one-to-one records at the same time
-            await tx.$executeRaw`
-            WITH ins_balance AS (
-              INSERT INTO balances (account_id, token_id, snapshot_id, event_id)
-              VALUES (${intTx.receiverId}, ${token.id}::uuid,
-                pg_catalog.gen_random_uuid(), ${event.id})
-              RETURNING *
-            )
-            INSERT INTO balance_snapshots
-              (id, amount, transaction_id, event_id, delta, token_id, account_id)
-            SELECT snapshot_id, ${txAmount}, ${transaction.id}::uuid,
-              ${event.id}, ${txAmount},  ${token.id}::uuid, ${intTx.receiverId}
-            FROM   ins_balance;`;
-          }
+          balancesByAccount.sender = await removeFromBalances(
+            balancesByAccount.sender,
+            event,
+            tx,
+            transaction,
+            intTx,
+          );
+          balancesByAccount.receiver = await addToBalances(
+            balancesByAccount.receiver,
+            event,
+            tx,
+            transaction,
+            intTx,
+          );
+          balancesByAccount.receiver.concat(
+            await createBalances(newBalances, event, tx, transaction, intTx),
+          );
           return balancesByAccount;
         })
         .then((balancesByAccount: BalancesByAccount) => {
