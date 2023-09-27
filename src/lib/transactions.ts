@@ -136,8 +136,18 @@ export function getTxHandler(
       return;
     }
 
-    // Tokens exist?
     const tokenNames: string[] = Object.keys(tx.content.tokens);
+    if (
+      tokenNames.map((t) => tx.content.tokens[t]).some((n) => isNaN(n) || n < 0)
+    ) {
+      await ctx.prisma.event.create({ data: event });
+      log('Token amount must be a positive number. %s', event.id);
+      ctx.outbox.publish(
+        txErrorEvent('Token amount must be a positive number', tx),
+      );
+      return;
+    }
+    // Tokens exist?
     const tokens = await ctx.prisma.token.findMany({
       where: { name: { in: tokenNames } },
     });
