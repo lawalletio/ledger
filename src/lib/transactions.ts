@@ -1,10 +1,11 @@
 import { Debugger } from 'debug';
 import { NostrEvent } from '@nostr-dev-kit/ndk';
-import { Prisma, PrismaClient, Token, Transaction } from '@prisma/client';
-import { Context } from '@type/request';
+import { Prisma, Token, Transaction } from '@prisma/client';
 import { logger } from '@lib/utils';
 import { nostrEventToDB, txErrorEvent } from './events';
 import { Decimal } from '@prisma/client/runtime/library';
+import prisma from '@services/prisma';
+import outbox from '@services/outbox';
 
 const log: Debugger = logger.extend('nostr:transactions');
 const debug: Debugger = log.extend('debug');
@@ -78,7 +79,6 @@ export function snapshotCreate(
  * Return the database id of a transaction type
  */
 export async function getTxTypeId(
-  prisma: PrismaClient,
   typeName: string,
 ): Promise<string | undefined> {
   return prisma.transactionType
@@ -95,7 +95,6 @@ export async function getTxTypeId(
  * token(s) exists run the provided handler
  */
 export function getTxHandler(
-  ctx: Context,
   ntry: number,
   txType: TransactionType,
   handler: Function,
@@ -110,7 +109,7 @@ export function getTxHandler(
     });
 
     // Have we handled it before?
-    const dbEvent = await ctx.prisma.event.findUnique({
+    const dbEvent = await prisma.event.findUnique({
       select: { id: true },
       where: { id: nostrEvent.id },
     });
@@ -131,8 +130,8 @@ export function getTxHandler(
     if (undefined === event.payload) {
       log('Unable to parse content for %s', event.id);
       event.payload = {};
-      await ctx.prisma.event.create({ data: event });
-      ctx.outbox.publish(txErrorEvent('Unparsable content', tx));
+      await prisma.event.create({ data: event });
+      outbox.publish(txErrorEvent('Unparsable content', tx));
       return;
     }
 
@@ -140,30 +139,30 @@ export function getTxHandler(
     if (
       tokenNames.map((t) => tx.content.tokens[t]).some((n) => isNaN(n) || n < 0)
     ) {
-      await ctx.prisma.event.create({ data: event });
+      await prisma.event.create({ data: event });
       log('Token amount must be a positive number. %s', event.id);
-      ctx.outbox.publish(
+      outbox.publish(
         txErrorEvent('Token amount must be a positive number', tx),
       );
       return;
     }
     // Tokens exist?
-    const tokens = await ctx.prisma.token.findMany({
+    const tokens = await prisma.token.findMany({
       where: { name: { in: tokenNames } },
     });
     if (tokens.length != tokenNames.length) {
-      await ctx.prisma.event.create({ data: event });
+      await prisma.event.create({ data: event });
       log('Token not supported. %s', event.id);
-      ctx.outbox.publish(txErrorEvent('Token not supported', tx));
+      outbox.publish(txErrorEvent('Token not supported', tx));
       return;
     }
 
     // TODO: Store in memory on start-up or use prisma cache
     //  https://www.prisma.io/docs/data-platform/accelerate
-    const txTypeId = await getTxTypeId(ctx.prisma, tx.txType.name);
+    const txTypeId = await getTxTypeId(tx.txType.name);
     if (txTypeId === undefined) {
-      await ctx.prisma.event.create({ data: event });
-      ctx.outbox.publish(txErrorEvent('Transaction not supported', tx));
+      await prisma.event.create({ data: event });
+      outbox.publish(txErrorEvent('Transaction not supported', tx));
       return;
     }
     tx.txTypeId = txTypeId;

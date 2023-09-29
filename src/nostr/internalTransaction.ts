@@ -1,7 +1,6 @@
 import { Debugger } from 'debug';
 import type { NDKFilter, NostrEvent } from '@nostr-dev-kit/ndk';
 import { NotFoundError } from '@prisma/client/runtime/library';
-import { Context } from '@type/request';
 
 import { balanceEvent, Kind, txErrorEvent, txOkEvent } from '@lib/events';
 import {
@@ -15,6 +14,8 @@ import {
 } from '@lib/transactions';
 import { requiredEnvVar, logger, nowInSeconds } from '@lib/utils';
 import { Prisma, Token } from '@prisma/client';
+import prisma from '@services/prisma';
+import outbox from '@services/outbox';
 
 const log: Debugger = logger.extend('nostr:internalTransaction');
 const debug: Debugger = log.extend('debug');
@@ -36,10 +37,7 @@ const filter: NDKFilter = {
  * the handler will decide if it must retry handling the event in case of
  * unknown error.
  */
-const getHandler = (
-  ctx: Context,
-  ntry: number,
-): ((nostrEvent: NostrEvent) => void) => {
+const getHandler = (ntry: number): ((nostrEvent: NostrEvent) => void) => {
   /**
    * Handle an internal-transaction event
    *
@@ -55,7 +53,6 @@ const getHandler = (
    *  - 'internal-transaction-error' if the funds were not transferred
    */
   return getTxHandler(
-    ctx,
     ntry,
     TransactionType.INTERNAL,
     async (
@@ -64,7 +61,7 @@ const getHandler = (
       intTx: ITransaction,
       tokens: Token[],
     ) => {
-      ctx.prisma
+      prisma
         .$transaction(async (tx) => {
           debug('Starting transaction for %s', event.id);
           const balances = await tx.balance.findMany({
@@ -140,9 +137,9 @@ const getHandler = (
         })
         .then((balancesByAccount: BalancesByAccount) => {
           debug('Transaction completed ok: %s', event.id);
-          ctx.outbox.publish(txOkEvent(intTx));
+          outbox.publish(txOkEvent(intTx));
           [...balancesByAccount.sender, ...balancesByAccount.receiver].forEach(
-            (b) => ctx.outbox.publish(balanceEvent(b, event.id)),
+            (b) => outbox.publish(balanceEvent(b, event.id)),
           );
           debug('Ok published');
           log('Finished handling event %s', event.id);
@@ -150,18 +147,18 @@ const getHandler = (
         .catch(async (e) => {
           if (e instanceof NotFoundError) {
             log('Failing because not enough funds. %s', event.id);
-            await ctx.prisma.event.create({ data: event });
-            ctx.outbox.publish(txErrorEvent('Not enough funds', intTx));
+            await prisma.event.create({ data: event });
+            outbox.publish(txErrorEvent('Not enough funds', intTx));
             return;
           }
           warn('Transaction failed, reason: %O', e);
           if (ntry < MAX_RETRIES) {
             log('Retrying event %s', event.id);
-            await getHandler(ctx, ++ntry)(nostrEvent);
+            await getHandler(++ntry)(nostrEvent);
           } else {
             error('Too many retries for %s, failing transaction', event.id);
-            await ctx.prisma.event.create({ data: event });
-            ctx.outbox.publish(txErrorEvent('Network Error', intTx));
+            await prisma.event.create({ data: event });
+            outbox.publish(txErrorEvent('Network Error', intTx));
           }
         });
     },
