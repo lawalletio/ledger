@@ -54,3 +54,10 @@ if (startExpress) {
     log(`Server is running on port ${port}`);
   });
 }
+<<<<<<< HEAD
+=======
+
+// Connect to Nostr
+log('Connecting to Nostr...');
+ndk.connect().catch((error) => warn('Error connecting to nostr: %o', error));
+>>>>>>> origin/main
