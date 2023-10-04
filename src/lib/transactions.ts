@@ -101,12 +101,6 @@ export function getTxHandler(
 ) {
   return async (nostrEvent: NostrEvent) => {
     log('Received event %s', nostrEvent.id);
-    debug('%O', {
-      id: nostrEvent.id,
-      author: nostrEvent.pubkey,
-      tags: nostrEvent.tags,
-      content: nostrEvent.content,
-    });
 
     // Have we handled it before?
     const dbEvent = await prisma.event.findUnique({
@@ -119,6 +113,7 @@ export function getTxHandler(
     }
 
     const event = nostrEventToDB(nostrEvent);
+    debug('%O', event);
     const tx: ITransaction = {
       txTypeId: '',
       txType: txType,
@@ -132,6 +127,14 @@ export function getTxHandler(
       event.payload = {};
       await prisma.event.create({ data: event });
       outbox.publish(txErrorEvent('Unparsable content', tx));
+      return;
+    }
+    if (null === event.author) {
+      log('Bad delegation for %s', event.id);
+      tx.senderId = nostrEvent.pubkey;
+      event.author = nostrEvent.pubkey;
+      await prisma.event.create({ data: event });
+      outbox.publish(txErrorEvent('Bad delegation', tx));
       return;
     }
 

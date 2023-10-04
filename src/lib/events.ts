@@ -1,5 +1,6 @@
 import { Debugger } from 'debug';
 import { NostrEvent } from '@nostr-dev-kit/ndk';
+import { nip26 } from 'nostr-tools';
 
 import { ExtBalance, ITransaction } from '@lib/transactions';
 import { logger, nowInSeconds, requiredEnvVar, requiredProp } from '@lib/utils';
@@ -37,8 +38,9 @@ function txResultEvent(
 }
 
 /**
- * Creates a database model of a nostr event, mainly for persisting it
- * to the database.
+ * Creates a model of a nostr event
+ *
+ * For persiting in the database and to handle NIP-26 author and signer
  */
 export function nostrEventToDB(event: NostrEvent) {
   let payload: any;
@@ -47,10 +49,13 @@ export function nostrEventToDB(event: NostrEvent) {
   } catch {
     warn('Error parsing content %O', event.content);
   }
+  const author = event.tags.some((t) => 'delegation' === t[0])
+    ? nip26.getDelegator(event)
+    : event.pubkey;
   return {
     id: requiredProp<string>(event, 'id'),
     signature: requiredProp<string>(event, 'sig'),
-    author: event.pubkey,
+    author,
     signer: event.pubkey,
     kind: requiredProp<number>(event, 'kind'),
     payload,
