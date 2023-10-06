@@ -130,7 +130,7 @@ const getHandler = (ntry: number): ((nostrEvent: NostrEvent) => void) => {
             transaction,
             intTx,
           );
-          balancesByAccount.receiver.concat(
+          balancesByAccount.receiver = balancesByAccount.receiver.concat(
             await createBalances(newBalances, event, tx, transaction, intTx),
           );
           return balancesByAccount;
