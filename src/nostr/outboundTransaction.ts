@@ -111,7 +111,7 @@ const getHandler = (ntry: number): ((nostrEvent: NostrEvent) => void) => {
             warn('Transaction failed, reason: %O', e);
             if (ntry < MAX_RETRIES) {
               log('Retrying event %s', event.id);
-              await getHandler(++ntry)(nostrEvent);
+              getHandler(++ntry)(nostrEvent);
             } else {
               error('Too many retries for %s, failing transaction', event.id);
               await prisma.event.create({ data: event });
