@@ -3,7 +3,6 @@ import { NostrEvent } from '@nostr-dev-kit/ndk';
 import { Prisma, Token, Transaction } from '@prisma/client';
 import { logger } from '@lib/utils';
 import { nostrEventToDB, txErrorEvent } from './events';
-import { Decimal } from '@prisma/client/runtime/library';
 import prisma from '@services/prisma';
 import outbox from '@services/outbox';
 
@@ -47,7 +46,7 @@ export type ITransaction = {
   receiverId: string;
   eventId: string;
   content: {
-    tokens: Record<string, number>;
+    tokens: Record<string, bigint>;
     memo?: string;
   };
 };
@@ -62,7 +61,7 @@ export type BalancesByAccount = {
  */
 export function snapshotCreate(
   balance: ExtBalance,
-  delta: number,
+  delta: bigint,
 ): Prisma.BalanceSnapshotUncheckedCreateInput {
   return {
     prevSnapshotId: balance.snapshotId,
@@ -139,9 +138,7 @@ export function getTxHandler(
     }
 
     const tokenNames: string[] = Object.keys(tx.content.tokens);
-    if (
-      tokenNames.map((t) => tx.content.tokens[t]).some((n) => isNaN(n) || n < 0)
-    ) {
+    if (tokenNames.map((t) => tx.content.tokens[t]).some((n) => n < 0n)) {
       await prisma.event.create({ data: event });
       log('Token amount must be a positive number. %s', event.id);
       outbox.publish(
@@ -190,8 +187,8 @@ async function alterBalances(
   for (const balance of balances) {
     const txAmount = intTx.content.tokens[balance.token.name];
     const balAmount = isInflow
-      ? balance.snapshot.amount.add(txAmount)
-      : balance.snapshot.amount.sub(txAmount);
+      ? balance.snapshot.amount + txAmount
+      : balance.snapshot.amount + txAmount;
     balance.eventId = event.id;
     balance.snapshot = {
       ...balance.snapshot,
@@ -257,7 +254,7 @@ export async function createBalances(
     const txAmount = intTx.content.tokens[token.name];
     balances.push({
       token,
-      snapshot: { amount: new Decimal(txAmount) },
+      snapshot: { amount: txAmount },
       accountId: intTx.receiverId,
     } as ExtBalance);
     // Create two interconnected one-to-one records at the same time
