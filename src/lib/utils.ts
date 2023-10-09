@@ -181,8 +181,5 @@ export const nowInSeconds = (): number => {
 };
 
 export const isEmpty = (obj: object): boolean => {
-  for (let i in obj) {
-    return false;
-  }
-  return true;
+  return 0 === Object.keys(obj).length;
 };
