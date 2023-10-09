@@ -8,7 +8,7 @@ import { logger } from './lib/utils';
 
 const log: Debugger = logger.extend('app');
 
-// Instantiate expresss
+// Instantiate express
 log('Instantiate express');
 const app = express();
 
