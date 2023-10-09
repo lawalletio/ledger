@@ -53,6 +53,11 @@ export function nostrEventToDB(event: NostrEvent) {
   const author = event.tags.some((t) => 'delegation' === t[0])
     ? nip26.getDelegator(event as Event<number>)
     : event.pubkey;
+
+  if (null === author) {
+    throw new Error('Invalid author');
+  }
+
   return {
     id: requiredProp<string>(event, 'id'),
     signature: requiredProp<string>(event, 'sig'),
