@@ -1,6 +1,6 @@
 import { Debugger } from 'debug';
 import type { NDKFilter, NostrEvent } from '@nostr-dev-kit/ndk';
-import { NotFoundError } from '@prisma/client/runtime/library';
+import { PrismaClientKnownRequestError } from '@prisma/client/runtime/library';
 
 import { balanceEvent, Kind, txErrorEvent, txOkEvent } from '@lib/events';
 import {
@@ -99,7 +99,10 @@ const getHandler = (ntry: number): ((nostrEvent: NostrEvent) => void) => {
           );
           // Does sender have the funds?
           if (balancesByAccount.sender.length != tokens.length) {
-            throw new NotFoundError('', '');
+            throw new PrismaClientKnownRequestError('', {
+              code: 'P2025',
+              clientVersion: '',
+            });
           }
 
           const transaction = await tx.transaction.create({
@@ -145,7 +148,7 @@ const getHandler = (ntry: number): ((nostrEvent: NostrEvent) => void) => {
           log('Finished handling event %s', event.id);
         })
         .catch(async (e) => {
-          if (e instanceof NotFoundError) {
+          if (e.code === 'P2025') {
             log('Failing because not enough funds. %s', event.id);
             await prisma.event.create({ data: event });
             outbox.publish(txErrorEvent('Not enough funds', intTx));
