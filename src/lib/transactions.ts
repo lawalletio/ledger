@@ -271,7 +271,7 @@ export async function createBalances(
     INSERT INTO balance_snapshots
       (id, amount, transaction_id, event_id, delta, token_id, account_id)
     SELECT snapshot_id, ${txAmount}, ${transaction.id}::uuid,
-      ${event.id}, ${txAmount},  ${token.id}::uuid, ${intTx.receiverId}
+      event_id, ${txAmount}, token_id, account_id
     FROM   ins_balance;`;
   }
   return balances;
