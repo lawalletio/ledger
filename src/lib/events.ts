@@ -1,6 +1,6 @@
 import { Debugger } from 'debug';
 import { NostrEvent } from '@nostr-dev-kit/ndk';
-import { nip26 } from 'nostr-tools';
+import { nip26, Event } from 'nostr-tools';
 
 import { ExtBalance, ITransaction } from '@lib/transactions';
 import { logger, nowInSeconds, requiredEnvVar, requiredProp } from '@lib/utils';
@@ -49,8 +49,9 @@ export function nostrEventToDB(event: NostrEvent) {
   } catch {
     warn('Error parsing content %O', event.content);
   }
+
   const author = event.tags.some((t) => 'delegation' === t[0])
-    ? nip26.getDelegator(event)
+    ? nip26.getDelegator(event as Event<number>)
     : event.pubkey;
   return {
     id: requiredProp<string>(event, 'id'),

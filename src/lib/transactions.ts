@@ -116,7 +116,7 @@ export function getTxHandler(
     const tx: ITransaction = {
       txTypeId: '',
       txType: txType,
-      senderId: event.author,
+      senderId: event.author as string,
       receiverId: nostrEvent.tags.filter((t) => t[0] == 'p')[1][1],
       eventId: event.id,
       content: event.payload,
