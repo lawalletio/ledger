@@ -188,7 +188,7 @@ async function alterBalances(
     const txAmount = intTx.content.tokens[balance.token.name];
     const balAmount = isInflow
       ? balance.snapshot.amount + txAmount
-      : balance.snapshot.amount + txAmount;
+      : balance.snapshot.amount - txAmount;
     balance.eventId = event.id;
     balance.snapshot = {
       ...balance.snapshot,
