@@ -3,8 +3,7 @@ import { NostrEvent } from '@nostr-dev-kit/ndk';
 import { Prisma, Token, Transaction } from '@prisma/client';
 import { logger } from '@lib/utils';
 import { nostrEventToDB, txErrorEvent } from './events';
-import prisma from '@services/prisma';
-import outbox from '@services/outbox';
+import { Context } from '@type/request';
 
 const log: Debugger = logger.extend('nostr:transactions');
 const debug: Debugger = log.extend('debug');
@@ -94,6 +93,7 @@ export async function getTxTypeId(
  * token(s) exists run the provided handler
  */
 export function getTxHandler(
+  ctx: Context,
   ntry: number,
   txType: TransactionType,
   handler: Function,
@@ -102,7 +102,7 @@ export function getTxHandler(
     log('Received event %s', nostrEvent.id);
 
     // Have we handled it before?
-    const dbEvent = await prisma.event.findUnique({
+    const dbEvent = await ctx.prisma.event.findUnique({
       select: { id: true },
       where: { id: nostrEvent.id },
     });
@@ -124,36 +124,36 @@ export function getTxHandler(
     if (undefined === event.payload) {
       log('Unable to parse content for %s', event.id);
       event.payload = {};
-      await prisma.event.create({ data: event });
-      outbox.publish(txErrorEvent('Unparsable content', tx));
+      await ctx.prisma.event.create({ data: event });
+      ctx.outbox.publish(txErrorEvent('Unparsable content', tx));
       return;
     }
     if (null === event.author) {
       log('Bad delegation for %s', event.id);
       tx.senderId = nostrEvent.pubkey;
       event.author = nostrEvent.pubkey;
-      await prisma.event.create({ data: event });
-      outbox.publish(txErrorEvent('Bad delegation', tx));
+      await ctx.prisma.event.create({ data: event });
+      ctx.outbox.publish(txErrorEvent('Bad delegation', tx));
       return;
     }
 
     const tokenNames: string[] = Object.keys(tx.content.tokens);
     if (tokenNames.map((t) => tx.content.tokens[t]).some((n) => n < 0n)) {
-      await prisma.event.create({ data: event });
+      await ctx.prisma.event.create({ data: event });
       log('Token amount must be a positive number. %s', event.id);
-      outbox.publish(
+      ctx.outbox.publish(
         txErrorEvent('Token amount must be a positive number', tx),
       );
       return;
     }
     // Tokens exist?
-    const tokens = await prisma.token.findMany({
+    const tokens = await ctx.prisma.token.findMany({
       where: { name: { in: tokenNames } },
     });
     if (tokens.length != tokenNames.length) {
-      await prisma.event.create({ data: event });
+      await ctx.prisma.event.create({ data: event });
       log('Token not supported. %s', event.id);
-      outbox.publish(txErrorEvent('Token not supported', tx));
+      ctx.outbox.publish(txErrorEvent('Token not supported', tx));
       return;
     }
 
@@ -161,8 +161,8 @@ export function getTxHandler(
     //  https://www.prisma.io/docs/data-platform/accelerate
     const txTypeId = await getTxTypeId(tx.txType.name);
     if (txTypeId === undefined) {
-      await prisma.event.create({ data: event });
-      outbox.publish(txErrorEvent('Transaction not supported', tx));
+      await ctx.prisma.event.create({ data: event });
+      ctx.outbox.publish(txErrorEvent('Transaction not supported', tx));
       return;
     }
     tx.txTypeId = txTypeId;

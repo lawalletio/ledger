@@ -45,7 +45,7 @@ function txResultEvent(
 export function nostrEventToDB(event: NostrEvent) {
   let payload: any;
   try {
-    payload = JSON.parse(event.content, (k, v) => isNaN(v) ? v : BigInt(v));
+    payload = JSON.parse(event.content, (k, v) => (isNaN(v) ? v : BigInt(v)));
   } catch {
     warn('Error parsing content %O', event.content);
   }

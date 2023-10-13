@@ -12,8 +12,7 @@ import {
 } from '@lib/transactions';
 import { requiredEnvVar, logger, nowInSeconds } from '@lib/utils';
 import { Prisma, Token } from '@prisma/client';
-import prisma from '@services/prisma';
-import outbox from '@services/outbox';
+import { Context } from '@type/request';
 
 const log: Debugger = logger.extend('nostr:inboundTransaction');
 const debug: Debugger = log.extend('debug');
@@ -31,10 +30,13 @@ const filter: NDKFilter = {
 /**
  * Return the inbound-transaction handler
  *
- * Injects `ntry` based on which the handler will decide if it must retry
- * handling the event in case of unknown error.
+ * Injects the context and `ntry` based on which the handler will decide
+ * if it must retry handling the event in case of unknown error.
  */
-const getHandler = (ntry: number): ((nostrEvent: NostrEvent) => void) => {
+const getHandler = (
+  ctx: Context,
+  ntry: number,
+): ((nostrEvent: NostrEvent) => void) => {
   /**
    * Handle an inbound-transaction event
    *
@@ -49,6 +51,7 @@ const getHandler = (ntry: number): ((nostrEvent: NostrEvent) => void) => {
    *  - 'inbound-transaction-error' if the funds were not minted
    */
   return getTxHandler(
+    ctx,
     ntry,
     TransactionType.INBOUND,
     async (
@@ -59,11 +62,13 @@ const getHandler = (ntry: number): ((nostrEvent: NostrEvent) => void) => {
     ) => {
       if (event.author !== requiredEnvVar('MINTER_PUBLIC_KEY')) {
         warn('Non-minter is trying to mint. %s', event.id);
-        await prisma.event.create({ data: event });
-        outbox.publish(txErrorEvent('Author cannot mint this token', intTx));
+        await ctx.prisma.event.create({ data: event });
+        ctx.outbox.publish(
+          txErrorEvent('Author cannot mint this token', intTx),
+        );
       }
 
-      prisma
+      ctx.prisma
         .$transaction(async (tx) => {
           debug('Starting transaction for %s', event.id);
 
@@ -98,16 +103,18 @@ const getHandler = (ntry: number): ((nostrEvent: NostrEvent) => void) => {
           return balances;
         })
         .then((balances: ExtBalance[]) => {
-          outbox.publish(txOkEvent(intTx));
-          balances.forEach((b) => outbox.publish(balanceEvent(b, event.id)));
+          ctx.outbox.publish(txOkEvent(intTx));
+          balances.forEach((b) =>
+            ctx.outbox.publish(balanceEvent(b, event.id)),
+          );
           debug('Ok published');
           log('Finished handling event %s', event.id);
         })
         .catch(async (e) => {
           if (e.code === 'P2025') {
             log('Failing because not enough funds. %s', event.id);
-            await prisma.event.create({ data: event });
-            outbox.publish(txErrorEvent('Not enough funds', intTx));
+            await ctx.prisma.event.create({ data: event });
+            ctx.outbox.publish(txErrorEvent('Not enough funds', intTx));
           } else {
             warn('Transaction failed, reason: %O', e);
             if (ntry < MAX_RETRIES) {
@@ -115,8 +122,8 @@ const getHandler = (ntry: number): ((nostrEvent: NostrEvent) => void) => {
               await getHandler(++ntry)(nostrEvent);
             } else {
               error('Too many retries for %s, failing transaction', event.id);
-              await prisma.event.create({ data: event });
-              outbox.publish(txErrorEvent('Network Error', intTx));
+              await ctx.prisma.event.create({ data: event });
+              ctx.outbox.publish(txErrorEvent('Network Error', intTx));
             }
           }
         });
