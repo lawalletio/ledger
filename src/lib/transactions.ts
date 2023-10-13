@@ -1,6 +1,6 @@
 import { Debugger } from 'debug';
 import { NostrEvent } from '@nostr-dev-kit/ndk';
-import { Prisma, Token, Transaction } from '@prisma/client';
+import { Prisma, PrismaClient, Token, Transaction } from '@prisma/client';
 import { logger } from '@lib/utils';
 import { nostrEventToDB, txErrorEvent } from './events';
 import { Context } from '@type/request';
@@ -77,6 +77,7 @@ export function snapshotCreate(
  * Return the database id of a transaction type
  */
 export async function getTxTypeId(
+  prisma: PrismaClient,
   typeName: string,
 ): Promise<string | undefined> {
   return prisma.transactionType
@@ -159,7 +160,7 @@ export function getTxHandler(
 
     // TODO: Store in memory on start-up or use prisma cache
     //  https://www.prisma.io/docs/data-platform/accelerate
-    const txTypeId = await getTxTypeId(tx.txType.name);
+    const txTypeId = await getTxTypeId(ctx.prisma, tx.txType.name);
     if (txTypeId === undefined) {
       await ctx.prisma.event.create({ data: event });
       ctx.outbox.publish(txErrorEvent('Transaction not supported', tx));
