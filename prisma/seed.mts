@@ -13,8 +13,8 @@ const tokens = [
 ];
 
 async function main() {
-  prisma.token.createMany({ data: tokens });
-  prisma.transactionType.createMany({ data: transactionTypes });
+  await prisma.token.createMany({ data: tokens });
+  await prisma.transactionType.createMany({ data: transactionTypes });
 }
 
 main()
