@@ -14,6 +14,8 @@ export enum Kind {
 const log: Debugger = logger.extend('nostr:events');
 const warn: Debugger = log.extend('warn');
 
+export const REPUBLISH_INTERVAL_MS: number = 1000; // 1s
+
 /**
  * Creates a response event for publishing on nostr after processing a
  * transaction.

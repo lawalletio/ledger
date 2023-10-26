@@ -1,7 +1,13 @@
 import { Debugger } from 'debug';
 import type { NDKFilter, NostrEvent } from '@nostr-dev-kit/ndk';
 
-import { balanceEvent, Kind, txErrorEvent, txOkEvent } from '@lib/events';
+import {
+  balanceEvent,
+  Kind,
+  txErrorEvent,
+  txOkEvent,
+  REPUBLISH_INTERVAL_MS,
+} from '@lib/events';
 import {
   ExtBalance,
   getTxHandler,
@@ -105,6 +111,28 @@ const getHandler = (
           balances.forEach((b) =>
             ctx.outbox.publish(balanceEvent(b, event.id)),
           );
+          if (balances.length !== 0) {
+            setTimeout(async () => {
+              (
+                await ctx.prisma.balance.findMany({
+                  where: {
+                    accountId: balances[0].accountId,
+                    tokenId: {
+                      in: balances.map((b) => {
+                        return b.tokenId;
+                      }),
+                    },
+                  },
+                  include: { snapshot: true, token: true },
+                })
+              ).forEach((b) => {
+                debug(
+                  `RE-publishing events balance:${b.token.name}:${b.accountId}`,
+                );
+                ctx.outbox.publish(balanceEvent(b, b.eventId));
+              });
+            }, REPUBLISH_INTERVAL_MS);
+          }
           debug('Ok published');
           log('Finished handling event %s', event.id);
         })
