@@ -25,17 +25,21 @@ function txResultEvent(
   tx: ITransaction,
   success: boolean,
 ): NostrEvent {
+  let tags = [
+    ['p', tx.senderId],
+    ['p', tx.receiverId],
+    ['e', tx.eventId],
+    ['t', success ? tx.txType.ok : tx.txType.error],
+  ];
+  if (tx.extraTags) {
+    tags = tags.concat(tx.extraTags);
+  }
   return {
     content: content,
     created_at: nowInSeconds(),
     kind: Kind.REGULAR.valueOf(),
     pubkey: requiredEnvVar('NOSTR_PUBLIC_KEY'),
-    tags: [
-      ['p', tx.senderId],
-      ['p', tx.receiverId],
-      ['e', tx.eventId],
-      ['t', success ? tx.txType.ok : tx.txType.error],
-    ],
+    tags,
   };
 }
 

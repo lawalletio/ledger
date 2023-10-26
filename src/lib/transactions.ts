@@ -48,6 +48,7 @@ export type ITransaction = {
     tokens: Record<string, bigint>;
     memo?: string;
   };
+  extraTags?: string[][];
 };
 
 export type BalancesByAccount = {
@@ -121,6 +122,7 @@ export function getTxHandler(
       receiverId: nostrEvent.tags.filter((t) => t[0] == 'p')[1][1],
       eventId: event.id,
       content: event.payload,
+      extraTags: nostrEvent.tags.filter((t) => t[0] === 'e'),
     };
     if (undefined === event.payload) {
       log('Unable to parse content for %s', event.id);
