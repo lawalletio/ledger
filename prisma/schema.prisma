@@ -14,7 +14,7 @@ model Token {
   balances Balance[] @relation
 
   @@id([id])
-  @@index([name])
+  @@unique([name])
   @@map("tokens")
 }
 
