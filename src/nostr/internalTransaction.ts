@@ -163,14 +163,22 @@ const getHandler = (
                 await ctx.prisma.balance.findMany({
                   where: {
                     accountId: {
-                      in: balances.map((b) => {
-                        return b.accountId;
-                      }),
+                      in: [
+                        ...new Set(
+                          balances.map((b) => {
+                            return b.accountId;
+                          }),
+                        ),
+                      ],
                     },
                     tokenId: {
-                      in: balances.map((b) => {
-                        return b.tokenId;
-                      }),
+                      in: [
+                        ...new Set(
+                          balances.map((b) => {
+                            return b.tokenId;
+                          }),
+                        ),
+                      ],
                     },
                   },
                   include: { snapshot: true, token: true },
