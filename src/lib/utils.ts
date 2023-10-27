@@ -153,17 +153,18 @@ export const setUpSubscriptions = (
         .subscribe(filter, {
           closeOnEose: false,
         })
-        .on(
-          'event',
-          async (nostrEvent: NostrEvent): Promise<void> => {
-            try {
-              const handler: (nostrEvent: NostrEvent) => Promise<void> = getHandler(ctx, 0);
-              return await handler(nostrEvent);
-            } catch (e) {
-              warn(`Unexpected exception found when handling ${matches?.groups?.name}: %O`, e);
-            }
-          },
-        );
+        .on('event', async (nostrEvent: NostrEvent): Promise<void> => {
+          try {
+            const handler: (nostrEvent: NostrEvent) => Promise<void> =
+              getHandler(ctx, 0);
+            return await handler(nostrEvent);
+          } catch (e) {
+            warn(
+              `Unexpected exception found when handling ${matches?.groups?.name}: %O`,
+              e,
+            );
+          }
+        });
       log(`Created ${matches.groups.name} subscription`);
     } else {
       warn(
