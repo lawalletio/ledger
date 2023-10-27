@@ -130,9 +130,13 @@ const getHandler = (
                     tokenId: {
                       in: [
                         ...new Set(
-                          balances.map((b) => {
-                            return b.tokenId;
-                          }),
+                          balances
+                            .map((b) => {
+                              return b.tokenId ?? b.token.id;
+                            })
+                            .filter((b) => {
+                              return typeof b !== 'undefined' && b !== null;
+                            }),
                         ),
                       ],
                     },
