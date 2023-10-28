@@ -2,7 +2,7 @@ import { Debugger } from 'debug';
 import { NostrEvent } from '@nostr-dev-kit/ndk';
 import { Prisma, PrismaClient, Token, Transaction } from '@prisma/client';
 import { logger } from '@lib/utils';
-import { nostrEventToDB, txErrorEvent } from './events';
+import { nostrEventToDB, txErrorEvent } from '@lib/events';
 import { Context } from '@type/request';
 
 const log: Debugger = logger.extend('nostr:transactions');
