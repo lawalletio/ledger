@@ -97,7 +97,13 @@ export function balanceEvent(balance: ExtBalance, eventId: string): NostrEvent {
  * transaction.
  */
 export function txOkEvent(tx: ITransaction): NostrEvent {
-  return txResultEvent('{}', tx, true);
+  return txResultEvent(
+    JSON.stringify(tx.content, (_, v) =>
+      typeof v === 'bigint' ? Number(v) : v,
+    ),
+    tx,
+    true,
+  );
 }
 
 /**
