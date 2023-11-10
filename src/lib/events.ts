@@ -111,5 +111,5 @@ export function txOkEvent(tx: ITransaction): NostrEvent {
  * while processing a transaction.
  */
 export function txErrorEvent(message: string, tx: ITransaction): NostrEvent {
-  return txResultEvent(`{messages:["${message}"]}`, tx, false);
+  return txResultEvent(JSON.stringify({ messages: [message] }), tx, false);
 }
