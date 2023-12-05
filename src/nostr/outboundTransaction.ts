@@ -107,7 +107,7 @@ const getHandler = (
           const okEvent = txOkEvent(intTx);
           // Add original internal-start eventId
           okEvent.tags.concat(nostrEvent.tags.filter((t) => t[0] == 'e'));
-          ctx.outbox.publish(txOkEvent(intTx));
+          ctx.outbox.publish(okEvent);
           balances.forEach((b) =>
             ctx.outbox.publish(balanceEvent(b, event.id)),
           );
