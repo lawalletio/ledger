@@ -99,7 +99,7 @@ export function balanceEvent(balance: ExtBalance, eventId: string): NostrEvent {
 export function txOkEvent(tx: ITransaction): NostrEvent {
   return txResultEvent(
     JSON.stringify(tx.content, (_, v) =>
-      typeof v === 'bigint' ? String(v) : v,
+      typeof v === 'bigint' ? Number(v) : v,
     ),
     tx,
     true,
@@ -111,11 +111,5 @@ export function txOkEvent(tx: ITransaction): NostrEvent {
  * while processing a transaction.
  */
 export function txErrorEvent(message: string, tx: ITransaction): NostrEvent {
-  return txResultEvent(
-    JSON.stringify({ messages: [message] }, (_, v) =>
-      typeof v === 'bigint' ? String(v) : v,
-    ),
-    tx,
-    false,
-  );
+  return txResultEvent(JSON.stringify({ messages: [message] }), tx, false);
 }
