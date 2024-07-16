@@ -56,6 +56,8 @@ export type BalancesByAccount = {
   receiver: ExtBalance[];
 };
 
+const LOW_HEX_32B: RegExp = /^[0-9a-f]{64}$/;
+
 /**
  * Return the data needed for creating a balance snapshot
  */
@@ -114,12 +116,13 @@ export function getTxHandler(
     }
 
     const event = nostrEventToDB(nostrEvent);
+    const receiver = nostrEvent.tags.filter((t) => t[0] == 'p')[1][1];
     debug('%O', event);
     const tx: ITransaction = {
       txTypeId: '',
       txType: txType,
       senderId: event.author as string,
-      receiverId: nostrEvent.tags.filter((t) => t[0] == 'p')[1][1],
+      receiverId: receiver,
       eventId: event.id,
       content: event.payload,
       extraTags: nostrEvent.tags.filter((t) => ['e', 'bolt11'].includes(t[0])),
@@ -137,6 +140,15 @@ export function getTxHandler(
       event.author = nostrEvent.pubkey;
       await ctx.prisma.event.create({ data: event });
       ctx.outbox.publish(txErrorEvent('Bad delegation', tx));
+      return;
+    }
+
+    if (!LOW_HEX_32B.test(receiver)) {
+      log('Invalid receiver pubkey for %s', event.id);
+      tx.senderId = nostrEvent.pubkey;
+      event.author = nostrEvent.pubkey;
+      await ctx.prisma.event.create({ data: event });
+      ctx.outbox.publish(txErrorEvent('Invalid receiver', tx));
       return;
     }
 
