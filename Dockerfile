@@ -1,4 +1,5 @@
-FROM node:18-alpine AS base
+FROM --platform=$BUILDPLATFORM node:18-alpine AS base
+
 
 RUN ["addgroup", "--system", "--gid", "1001", "nodejs"]
 RUN ["adduser" , "--system", "--uid", "1001", "nodejs"]
