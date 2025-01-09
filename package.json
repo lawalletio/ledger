@@ -46,6 +46,7 @@
     "helmet": "^7.0.0",
     "morgan": "^1.10.0",
     "nostr-tools": "^1.17.0",
+    "prisma": "^5.5.2",
     "websocket-polyfill": "^0.0.3",
     "ws": "^8.14.2"
   },
@@ -63,14 +64,13 @@
     "@typescript-eslint/parser": "^6.9.1",
     "chokidar": "^3.5.3",
     "concurrently": "^8.2.2",
-    "eslint": "^8.52.0",
+    "eslint": "^9.17.0",
     "eslint-config-airbnb-typescript": "^17.1.0",
     "eslint-import-resolver-typescript": "^3.6.1",
     "eslint-plugin-import": "^2.29.0",
     "jest": "^29.7.0",
     "nodemon": "^3.0.1",
     "prettier": "^3.0.3",
-    "prisma": "^5.5.2",
     "supertest": "^6.3.3",
     "ts-jest": "^29.1.1",
     "typescript": "^5.2.2"
